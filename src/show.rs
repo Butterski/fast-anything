@@ -100,14 +100,14 @@ pub fn port(p: &PortOut, show_next: bool) {
         thousands(p.calls_seen),
         if p.skipped > 0 { format!(", skipped {} with non-plain data", p.skipped) } else { String::new() }
     ));
-    ui::ok(format!("Rust crate ready: {}", p.crate_dir.display()));
+    let what = match p.backend {
+        crate::backend::Backend::Cpp => "C++ port",
+        crate::backend::Backend::Rust => "Rust crate",
+    };
+    ui::ok(format!("{what} ready: {}", p.crate_dir.display()));
     if show_next {
-        let file = p.lib_rs.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-        ui::line(format!(
-            "  Have your coding agent follow {} and write {}, then:",
-            bold("TASK.md"),
-            bold(format!("src/{file}"))
-        ));
+        let file = p.lib_rs.strip_prefix(&p.crate_dir).unwrap_or(&p.lib_rs).to_string_lossy().replace('\\', "/");
+        ui::line(format!("  Have your coding agent follow {} and write {}, then:", bold("TASK.md"), bold(file)));
         next(&format!("fast-anything verify {}", p.id));
     }
 }
@@ -145,11 +145,12 @@ pub fn verify(id: &str, v: &Verify) {
             ui::warn(crate::pipeline::too_cheap_hint(&bold(id), v));
         } else if let Some(m) = v.micro {
             ui::ok(format!(
-                "{} per call: {} in {}, {} in Rust: {}",
+                "{} per call: {} in {}, {} in {}: {}",
                 bold(id),
                 nanos(m.original_ns),
                 v.lang.label(),
                 nanos(m.rust_ns),
+                v.backend.label(),
                 if v.slower() {
                     red(bold(format!("{} slower", times(1.0 / m.speedup))))
                 } else {
@@ -176,7 +177,7 @@ pub fn bench(b: &BenchResult) {
     ui::line(format!("  {}  {} {}", pad(b.lang.label(), 11), dim(bar(1.0, 24)), secs(b.before.median)));
     ui::line(format!(
         "  {}  {} {}",
-        pad("Rust", 11),
+        pad("Ported", 11),
         rust(bar(b.after.median / b.before.median.max(1e-12), 24)),
         secs(b.after.median)
     ));
@@ -204,14 +205,14 @@ pub fn bench(b: &BenchResult) {
             "that's within run-to-run noise: the original alone varies by up to ±{noise:.1}% between runs. More rounds may settle it:  fast-anything bench --runs 15"
         )),
         Some(Verdict::Slower) => ui::warn(format!(
-            "the app is slower with the Rust ports, beyond its own run-to-run noise (±{noise:.1}%). See which port costs more than it saves:  fast-anything status"
+            "the app is slower with the ports, beyond its own run-to-run noise (±{noise:.1}%). See which port costs more than it saves:  fast-anything status"
         )),
         Some(Verdict::Faster) | None => {}
     }
     match &b.output_diff {
         Some(diff) if diff == OUTPUT_VARIES => ui::warn(diff),
         Some(diff) => ui::warn(format!(
-            "the app printed something else with the Rust ports ({diff}), while every run of the original printed the same: a port behaves differently from the original"
+            "the app printed something else with the ports ({diff}), while every run of the original printed the same: a port behaves differently from the original"
         )),
         None => {}
     }
@@ -239,12 +240,14 @@ pub fn status(ctx: &Ctx) {
     }
     ui::line("");
     for p in s.ports.values() {
+        let on = format!("● on ({})", p.backend.label());
+        let waiting = format!("○ waiting for the {}", p.backend.label());
         let (label, paint): (&str, fn(String) -> String) = match (&p.verify, p.enabled) {
-            (_, true) => ("● on (Rust)", |s| green(s)),
+            (_, true) => (&on, |s| green(s)),
             (Some(v), false) if v.ok() => ("○ verified, off", |s| yellow(s)),
             (Some(v), false) if !v.built => ("✗ doesn't compile", |s| red(s)),
             (Some(_), false) => ("✗ mismatches", |s| red(s)),
-            (None, false) => ("○ waiting for the Rust", |s| dim(s)),
+            (None, false) => (&waiting, |s| dim(s)),
         };
         let state = paint(pad(label, 26));
         let speed = p
@@ -461,6 +464,7 @@ mod tests {
                 owner: None,
                 line: 10,
                 sources: vec![],
+                backend: crate::backend::Backend::Rust,
             },
         );
         let ctx = Ctx {

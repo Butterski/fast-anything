@@ -1,9 +1,10 @@
-//! fast-anything: find the slow 5% of your app, rewrite just that in Rust, prove it behaves the same.
+//! fast-anything: find the slow 5% of your app, rewrite just that in C++ or Rust, prove it behaves the same.
 
 mod agent;
 mod backend;
 mod bench;
 mod cfamily;
+mod cpp;
 mod csharp;
 mod doctor;
 mod golang;
@@ -50,7 +51,7 @@ struct Cli {
 enum Cmd {
     /// Everything in one go: scan, port the hottest functions with your agent, verify, switch on, benchmark
     Go {
-        /// Coding agent that writes the Rust: claude, codex, or any command that reads a prompt on stdin
+        /// Coding agent that writes the port: claude, codex, or any command that reads a prompt on stdin
         #[arg(long)]
         agent: Option<String>,
         /// How many hot functions to port
@@ -59,12 +60,15 @@ enum Cmd {
         /// Agent attempts per function before giving up
         #[arg(long, default_value_t = 3)]
         attempts: usize,
-        /// Benchmark rounds: each runs the original twice and Rust once, plus one warm-up per side (5 = 11 original runs, 6 Rust runs)
+        /// Benchmark rounds: each runs the original twice and the ports once, plus one warm-up per side (5 = 11 original runs, 6 port runs)
         #[arg(long, default_value_t = 5)]
         runs: usize,
         /// Real calls to record per function
         #[arg(long, default_value_t = 500)]
         samples: usize,
+        /// What the ports are written in: cpp (the default for Python apps on Linux and macOS) or rust
+        #[arg(long, value_enum)]
+        backend: Option<backend::Backend>,
         /// How you run your app, after --
         #[arg(last = true, required = true)]
         command: Vec<String>,
@@ -78,7 +82,7 @@ enum Cmd {
         #[arg(last = true, required = true)]
         command: Vec<String>,
     },
-    /// Record a function's real calls and set up its Rust crate (default: the top candidate)
+    /// Record a function's real calls and set up its port: C++ for Python apps, else a Rust crate (default: the top candidate)
     Port {
         id: Option<String>,
         /// Have this coding agent write the port right away
@@ -88,15 +92,18 @@ enum Cmd {
         attempts: usize,
         #[arg(long, default_value_t = 500)]
         samples: usize,
+        /// What the port is written in: cpp (the default for Python apps on Linux and macOS) or rust
+        #[arg(long, value_enum)]
+        backend: Option<backend::Backend>,
     },
-    /// Build the Rust port and replay every recorded call against it
+    /// Build the port and replay every recorded call against it
     Verify {
         id: Option<String>,
         /// Verify every port (after a toolchain or dependency upgrade, or changes to the app)
         #[arg(long, conflicts_with = "id")]
         all: bool,
     },
-    /// Switch your app over to the verified Rust port
+    /// Switch your app over to the verified port
     Enable {
         id: Option<String>,
         /// Enable even if it hasn't passed verify
@@ -118,9 +125,9 @@ enum Cmd {
         #[arg(long)]
         all: bool,
     },
-    /// Time your app with the originals vs the Rust ports
+    /// Time your app with the originals vs the ports
     Bench {
-        /// Rounds: each runs the original twice (an A/A control for noise) and Rust once, plus one warm-up per side (5 = 11 original runs, 6 Rust runs)
+        /// Rounds: each runs the original twice (an A/A control for noise) and the ports once, plus one warm-up per side (5 = 11 original runs, 6 port runs)
         #[arg(long, default_value_t = 5)]
         runs: usize,
     },
@@ -128,7 +135,7 @@ enum Cmd {
     Report,
     /// Show the last scan and every port
     Status,
-    /// Check that Rust, Python/Node and your agents are installed
+    /// Check that the compilers, Python/Node and your agents are installed
     Doctor,
     /// Run as an MCP server on stdio (for Claude Code, Codex, Cursor, ...)
     Mcp,
@@ -170,8 +177,8 @@ fn run(cmd: Cmd, root: &Path, json: bool) -> Result<()> {
         ui::banner();
     }
     match cmd {
-        Cmd::Go { agent, top, attempts, runs, samples, command } => {
-            pipeline::go(root, command, agent.as_deref(), top, attempts, runs, samples)
+        Cmd::Go { agent, top, attempts, runs, samples, backend, command } => {
+            pipeline::go(root, command, agent.as_deref(), top, attempts, runs, samples, backend)
         }
         Cmd::Scan { command, duration } => {
             let out = pipeline::scan(root, command, duration)?;
@@ -182,8 +189,8 @@ fn run(cmd: Cmd, root: &Path, json: bool) -> Result<()> {
                 Ok(())
             }
         }
-        Cmd::Port { id, agent, attempts, samples } => {
-            let out = pipeline::port(root, id.as_deref(), samples)?;
+        Cmd::Port { id, agent, attempts, samples, backend } => {
+            let out = pipeline::port_with(root, id.as_deref(), samples, backend)?;
             if let Some(agent) = agent {
                 if !json {
                     show::port(&out, false);
@@ -242,7 +249,8 @@ fn run(cmd: Cmd, root: &Path, json: bool) -> Result<()> {
             if json {
                 return show::json(&json!({ "enabled": id }));
             }
-            ui::ok(format!("{} now runs in Rust", ui::bold(&id)));
+            let label = state::Ctx::open(root)?.state.ports.get(&id).map_or("Rust", |p| p.backend.label());
+            ui::ok(format!("{} now runs in {label}", ui::bold(&id)));
             show::next("fast-anything bench");
             Ok(())
         }
@@ -378,7 +386,15 @@ mod tests {
             Cmd::Build,
             Cmd::Clean { all: false },
             Cmd::Mcp,
-            Cmd::Go { agent: None, top: 1, attempts: 3, runs: 5, samples: 500, command: vec!["python".into()] },
+            Cmd::Go {
+                agent: None,
+                top: 1,
+                attempts: 3,
+                runs: 5,
+                samples: 500,
+                backend: None,
+                command: vec!["python".into()],
+            },
         ] {
             let err = run(cmd, root, true).unwrap_err();
             assert!(err.to_string().contains("--json isn't supported"), "{err}");

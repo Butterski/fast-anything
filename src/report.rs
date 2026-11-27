@@ -23,8 +23,15 @@ fn xml(s: &str) -> String {
 fn port_line(p: &Port) -> String {
     let v = p.verify.clone().unwrap_or_default();
     match v.micro {
-        Some(m) => format!("{} → Rust · {} per call · {}/{} calls verified", p.id, times(m.speedup), v.passed, v.total),
-        None => format!("{} → Rust · {}/{} calls verified", p.id, v.passed, v.total),
+        Some(m) => format!(
+            "{} → {} · {} per call · {}/{} calls verified",
+            p.id,
+            p.backend.label(),
+            times(m.speedup),
+            v.passed,
+            v.total
+        ),
+        None => format!("{} → {} · {}/{} calls verified", p.id, p.backend.label(), v.passed, v.total),
     }
 }
 
@@ -55,7 +62,7 @@ pub fn svg(project: &str, b: &BenchResult, ports: &[&Port]) -> String {
   <text x="420" y="92" font-family="{sans}" font-size="13" fill="#8b949e">{original}</text>
   <text x="720" y="92" font-family="{mono}" font-size="13" fill="#e6edf3" text-anchor="end">{before}</text>
   <rect x="420" y="100" width="300" height="16" rx="4" fill="#30363d"/>
-  <text x="420" y="146" font-family="{sans}" font-size="13" fill="#8b949e">Rust</text>
+  <text x="420" y="146" font-family="{sans}" font-size="13" fill="#8b949e">Ported</text>
   <text x="720" y="146" font-family="{mono}" font-size="13" fill="#e6edf3" text-anchor="end">{after}</text>
   <rect x="420" y="154" width="{after_w:.1}" height="16" rx="4" fill="#f74c00"/>
   <text x="32" y="196" font-family="{sans}" font-size="13" fill="#8b949e">{detail}</text>
@@ -105,7 +112,7 @@ fn outcome(h: &Hotspot, s: &State) -> String {
             Some(v) if v.ok() => "ported and verified, not enabled".into(),
             Some(v) if !v.built => "ported, doesn't compile".into(),
             Some(_) => "ported, doesn't match the original".into(),
-            None => "ported, waiting for the Rust".into(),
+            None => format!("ported, waiting for the {}", p.backend.label()),
         },
         None if h.worth_it() => "portable, not ported".into(),
         None => h.why_not().unwrap_or_default(),
@@ -158,13 +165,13 @@ pub fn markdown(project: &str, b: &BenchResult, s: &State) -> String {
     // results saved before rounds and the A/A control have no verdict and no range
     let how = if b.verdict.is_some() {
         format!(
-            "median of {} rounds, each running the original twice and Rust once in rotated order; middle half of the rounds {}–{}",
+            "median of {} rounds, each running the original twice and the ports once in rotated order; middle half of the rounds {}–{}",
             b.runs,
             times(b.speedup_q1).trim_end_matches('×'),
             times(b.speedup_q3)
         )
     } else {
-        format!("median of {} runs each, original and Rust interleaved", b.runs)
+        format!("median of {} runs each, original and ported interleaved", b.runs)
     };
     let (head, word) = headline(b.speedup);
     let scope = b.scope.as_ref().and_then(scope_line).map(|l| format!("{l}\n\n")).unwrap_or_default();
@@ -184,9 +191,9 @@ pub fn markdown(project: &str, b: &BenchResult, s: &State) -> String {
     // results from before the A/A control have no verdict
     if let Some(v) = b.verdict {
         let verdict = match v {
-            Verdict::Faster => "the Rust ports' change is clearly beyond that",
-            Verdict::Slower => "the Rust ports make it slower, beyond that",
-            Verdict::Noise => "the Rust ports' change is within that noise",
+            Verdict::Faster => "the ports' change is clearly beyond that",
+            Verdict::Slower => "the ports make it slower, beyond that",
+            Verdict::Noise => "the ports' change is within that noise",
         };
         md.push_str(&format!(
             "- A/A control, the original against itself in the same rounds: {:+.1}% (middle half {:+.1}% to {:+.1}%); {verdict}\n",
@@ -271,10 +278,7 @@ mod tests {
         let md = markdown("demo", &b, &State::default());
         assert!(md.contains("median of 5 rounds") && md.contains("228–240×"), "{md}");
         assert!(md.contains("- CPU time 95×: **11.90s** → **125ms**"), "{md}");
-        assert!(
-            md.contains("+0.7% (middle half -0.3% to +0.9%); the Rust ports' change is clearly beyond that"),
-            "{md}"
-        );
+        assert!(md.contains("+0.7% (middle half -0.3% to +0.9%); the ports' change is clearly beyond that"), "{md}");
         let card = svg("demo", &b, &[]);
         assert!(card.contains("234×") && card.contains("CPU time 95×"));
 
@@ -351,6 +355,7 @@ mod tests {
             owner: None,
             line: 1,
             sources: vec![],
+            backend: crate::backend::Backend::Rust,
         };
         let s = State {
             command: vec!["python".into(), "app.py".into()],

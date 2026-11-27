@@ -173,10 +173,32 @@ pub fn check() -> Report {
             hint: "npm i -g @openai/codex",
         },
     ];
-    let tools: Vec<Tool> = checks.into_iter().map(Check::into_tool).collect();
+    let mut tools: Vec<Tool> = checks.into_iter().map(Check::into_tool).collect();
     let ready_to_scan = tools[1..12].iter().any(|t| t.ok);
-    let ready_to_port = tools[0].ok;
+    let cxx = cxx_tool();
+    let ready_to_port = tools[0].ok || cxx.ok;
+    tools.push(cxx);
     Report { ready_to_scan, ready_to_port, tools }
+}
+
+/// What C++ ports need: a compiler, and the headers of the Python the app runs on.
+fn cxx_tool() -> Tool {
+    let cxx = std::env::var("CXX").ok().filter(|c| !c.trim().is_empty());
+    let found = cxx
+        .and_then(|c| version(&c, &["--version"]))
+        .or_else(|| version("c++", &["--version"]))
+        .or_else(|| version("g++", &["--version"]))
+        .or_else(|| version("clang++", &["--version"]));
+    let python = if cfg!(windows) { "python" } else { "python3" };
+    let problem = found.as_ref().and_then(|_| crate::cpp::python_include(python).err().map(|e| e.to_string()));
+    Tool {
+        name: "c++",
+        ok: found.is_some() && problem.is_none(),
+        version: found,
+        problem,
+        need: "for C++ ports of Python apps, with the Python headers",
+        hint: "Debian/Ubuntu: apt install build-essential python3-dev",
+    }
 }
 
 pub fn ensure_ready(report: &Report) -> Result<()> {
@@ -206,11 +228,13 @@ pub fn run() -> Result<()> {
     }
     ensure_ready(&report)?;
     ui::ok("ready to scan");
-    // scanning works without Rust, so a missing toolchain only warns (#142)
+    // scanning works without a compiler, so a missing toolchain only warns (#142)
     if report.ready_to_port {
         ui::ok("ready to port");
     } else {
-        ui::warn("Rust 1.85 or newer is needed to port, verify and enable: https://rustup.rs");
+        ui::warn(
+            "to port, verify and enable: a C++ compiler and the Python headers (C++ ports of Python apps), or Rust 1.85+ and a C linker (Rust ports): apt install build-essential python3-dev, https://rustup.rs",
+        );
     }
     Ok(())
 }

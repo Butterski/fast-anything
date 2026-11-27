@@ -211,7 +211,7 @@ impl BenchResult {
 }
 
 pub const OUTPUT_VARIES: &str =
-    "the original prints something different from run to run, so its output can't be compared with the Rust ports'";
+    "the original prints something different from run to run, so its output can't be compared with the ports'";
 
 /// Whether the Rust runs print what the original did, checked against every run of the original.
 struct OutputCheck {
@@ -260,7 +260,7 @@ fn time_once(ctx: &Ctx, exe: &str, args: &[String], original: bool) -> Result<Ru
         out.status.success(),
         "the app failed ({}) with the {} version:\n{}",
         out.status,
-        if original { ctx.state.lang.label() } else { "Rust" },
+        if original { ctx.state.lang.label() } else { "ported" },
         util::tail(&String::from_utf8_lossy(&out.stderr), 20)
     );
     Ok(Run { wall, cpu, stdout: out.stdout })
@@ -481,7 +481,7 @@ pub fn run(ctx: &Ctx, runs: usize) -> Result<BenchResult> {
         "no ports are enabled, so there is nothing to compare: port, verify and enable one first (fast-anything go)"
     );
     ui::step(format!(
-        "timing {} ({runs} rounds of {} twice and Rust once, rotated)",
+        "timing {} ({runs} rounds of {} twice and the ports once, rotated)",
         ui::bold(ctx.state.command.join(" ")),
         ctx.state.lang.label()
     ));

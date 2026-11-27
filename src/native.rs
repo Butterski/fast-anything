@@ -716,6 +716,7 @@ mod tests {
             owner: None,
             line: 1,
             sources: vec![],
+            backend: crate::backend::Backend::Rust,
         };
         let plain = glue_rs(&hs, &port, |_| None, None);
         assert!(plain.contains("T::deserialize(v)") && plain.contains("serde_json::to_value(result)"));

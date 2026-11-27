@@ -4,7 +4,7 @@
 use crate::hotspot::Hotspot;
 use crate::state::{Ctx, Port, Verify};
 use crate::util::{output, tail};
-use crate::{cfamily, csharp, golang, java, kotlin, node, php, python, r, ruby};
+use crate::{cfamily, cpp, csharp, golang, java, kotlin, node, php, python, r, ruby};
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -27,6 +27,46 @@ pub enum Lang {
     CSharp,
     R,
     Kotlin,
+}
+
+/// What a port is written in. Ports from before this fork had C++ are Rust.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum Backend {
+    #[default]
+    Rust,
+    Cpp,
+}
+
+impl Backend {
+    /// The backend of a new port: the requested one, else C++ where this fork has it (Python apps
+    /// on Linux and macOS), else Rust.
+    pub fn choose(lang: Lang, requested: Option<Backend>) -> Result<Backend> {
+        let cpp = lang == Lang::Python && !cfg!(windows);
+        match requested {
+            Some(Backend::Cpp) if !cpp => bail!(
+                "C++ ports cover Python apps on Linux and macOS so far; port this {} app with --backend rust",
+                lang.label()
+            ),
+            Some(backend) => Ok(backend),
+            None => Ok(if cpp { Backend::Cpp } else { Backend::Rust }),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Backend::Rust => "Rust",
+            Backend::Cpp => "C++",
+        }
+    }
+
+    /// As written on the command line and in state.json.
+    pub fn name(self) -> &'static str {
+        match self {
+            Backend::Rust => "rust",
+            Backend::Cpp => "cpp",
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -197,6 +237,9 @@ impl Lang {
     }
 
     pub fn scaffold(self, ctx: &Ctx, hs: &Hotspot, helpers: &[Hotspot], port: &Port) -> Result<String> {
+        if port.backend == Backend::Cpp {
+            return cpp::scaffold(ctx, hs, helpers, port);
+        }
         match self {
             Lang::Python => python::scaffold(ctx, hs, helpers, port),
             Lang::Node => node::scaffold(ctx, hs, helpers, port),
@@ -437,6 +480,9 @@ fn compiler_errors(log: &str) -> String {
 /// Release-build a port into .fast/lib. Ok(Err(log)) when it doesn't compile.
 /// Every port shares one target dir, so dependencies compile once per project.
 pub fn build(ctx: &Ctx, port: &Port) -> Result<std::result::Result<PathBuf, String>> {
+    if port.backend == Backend::Cpp {
+        return cpp::build(ctx, port);
+    }
     let exe = ctx.runtime()?;
     let dir = ctx.crate_dir(port);
     ensure!(dir.join("Cargo.toml").exists(), "{} has no crate yet: run  fast-anything port {}", port.id, port.id);
@@ -457,6 +503,14 @@ pub fn build(ctx: &Ctx, port: &Port) -> Result<std::result::Result<PathBuf, Stri
     fs::copy(target.join("release").join(&built), &dest)
         .with_context(|| format!("copying {built} into .fast/lib (is the app still running?)"))?;
     Ok(Ok(dest))
+}
+
+/// The hash of a port's sources in either backend (see source_hash and cpp::source_hash).
+pub fn port_hash(dir: &Path, backend: Backend) -> Result<String> {
+    match backend {
+        Backend::Rust => source_hash(dir),
+        Backend::Cpp => cpp::source_hash(dir),
+    }
 }
 
 /// FNV-1a over the crate's Cargo.toml and everything under src/, so build can tell whether the
@@ -666,6 +720,7 @@ mod tests {
             owner: None,
             line: 1,
             sources: vec![],
+            backend: Backend::Rust,
         };
         let dir = ctx.crate_dir(&port);
         fs::create_dir_all(&dir).unwrap();
@@ -712,6 +767,7 @@ mod tests {
             owner: None,
             line: 1,
             sources: vec![],
+            backend: Backend::Rust,
         };
         let dir = ctx.crate_dir(&port);
         fs::create_dir_all(&dir).unwrap();

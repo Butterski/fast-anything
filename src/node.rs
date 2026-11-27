@@ -2444,6 +2444,7 @@ assert.ok(!same([Number.MAX_VALUE, Infinity], [Number.MAX_VALUE, Number.MAX_VALU
             owner: None,
             line: 1,
             sources: vec![],
+            backend: crate::backend::Backend::Rust,
         };
         for original in [
             "export const pairs = (names: string[]): number => {\n  return 0;\n};\n",
@@ -2480,6 +2481,7 @@ assert.ok(!same([Number.MAX_VALUE, Infinity], [Number.MAX_VALUE, Number.MAX_VALU
             owner: Some("Text".into()),
             line: 2,
             sources: vec![],
+            backend: crate::backend::Backend::Rust,
         };
         let block = shim(&port, "./x.node", true);
         assert!(block.contains("Text.pairs = process.getBuiltinModule"), "{block}");
@@ -2508,6 +2510,7 @@ assert.ok(!same([Number.MAX_VALUE, Infinity], [Number.MAX_VALUE, Number.MAX_VALU
             owner: None,
             line: 1,
             sources: vec![],
+            backend: crate::backend::Backend::Rust,
         };
         let esm = shim(&port, "./.fast/lib/fa_fuzzy_levenshtein.node", true);
         assert!(esm.contains("createRequire(import.meta.url)(\"./.fast/lib/fa_fuzzy_levenshtein.node\").levenshtein"));
@@ -2693,6 +2696,7 @@ assert.ok(!same([Number.MAX_VALUE, Infinity], [Number.MAX_VALUE, Number.MAX_VALU
                 owner: None,
                 line: 1,
                 sources: vec![],
+                backend: crate::backend::Backend::Rust,
             };
             let enabled = with_shim(lib_src, &port, &shim(&port, "./fake_addon.cjs", false));
             fs::write(dir.join("lib.js"), &enabled).unwrap();
@@ -2740,6 +2744,7 @@ assert.ok(!same([Number.MAX_VALUE, Infinity], [Number.MAX_VALUE, Number.MAX_VALU
             owner: None,
             line: 1,
             sources: vec![],
+            backend: crate::backend::Backend::Rust,
         };
         enable(&ctx, &esm_port).unwrap();
         let esm_on = fs::read_to_string(esm_dir.join("lib.mjs")).unwrap();
@@ -2771,6 +2776,7 @@ assert.ok(!same([Number.MAX_VALUE, Infinity], [Number.MAX_VALUE, Number.MAX_VALU
             owner: None,
             line: 1,
             sources: vec![],
+            backend: crate::backend::Backend::Rust,
         };
         let (pa, pb) = (mk_port("a"), mk_port("b"));
         let on_a = with_shim(two_src, &pa, &shim(&pa, "./fake_addon.cjs", false));
@@ -2930,6 +2936,7 @@ assert.ok(!same([Number.MAX_VALUE, Infinity], [Number.MAX_VALUE, Number.MAX_VALU
                 owner: None,
                 line: 1,
                 sources: vec![],
+                backend: crate::backend::Backend::Rust,
             };
             let ctx = Ctx::open(&dir).unwrap();
             assert!(is_esm(&dir, &dir.join(&lib_name)), "{name}: expected auto-detected ESM");

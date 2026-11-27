@@ -512,6 +512,7 @@ mod tests {
             owner: None,
             line: 1,
             sources: vec![],
+            backend: crate::backend::Backend::Rust,
         };
         fs::write(dir.join("shim.rb"), shim(&port, &[], "../.fast/lib/libfa_app_rb_mean.so")).unwrap();
         let check = r#"

@@ -1,5 +1,6 @@
 //! MCP server on stdio (JSON-RPC 2.0, one message per line). Lets any agent drive fast-anything.
 
+use crate::backend::Backend;
 use crate::{pipeline, state, ui};
 use anyhow::Result;
 use serde_json::{Value, json};
@@ -8,9 +9,9 @@ use std::path::PathBuf;
 
 const PROTOCOL: &str = "2025-06-18";
 
-const INSTRUCTIONS: &str = "fast-anything speeds up Python, Node.js, Ruby, Java, Go, PHP, C, C++ and C# apps by porting their hottest pure functions to Rust (PyO3 / napi-rs / a C ABI bridge) \
-and proving the port gives the same results on real recorded calls. Loop: fast_scan -> fast_port -> write src/lib.rs \
-following the returned task -> fast_verify (repeat until it passes) -> fast_enable -> fast_bench -> fast_report.";
+const INSTRUCTIONS: &str = "fast-anything speeds up Python, Node.js, Ruby, Java, Go, PHP, C, C++ and C# apps by porting their hottest pure functions to native code \
+(C++ for Python apps on Linux and macOS; Rust through PyO3 / napi-rs / a C ABI bridge for the rest) and proving the port gives the same results on real recorded calls. \
+Loop: fast_scan -> fast_port -> write the file it names (port.cpp, or src/lib.rs / src/port.rs) following the returned task -> fast_verify (repeat until it passes) -> fast_enable -> fast_bench -> fast_report.";
 
 fn tools() -> Value {
     let path = json!({ "type": "string", "description": "Project folder (default: the server's working folder)" });
@@ -22,25 +23,25 @@ fn tools() -> Value {
     json!([
         tool(
             "fast_scan",
-            "Run the app under a profiler and rank functions by time share and portability to Rust.",
+            "Run the app under a profiler and rank functions by time share and portability to native code.",
             json!({ "command": { "type": "array", "items": { "type": "string" }, "description": "How the app runs, e.g. [\"python\", \"app.py\"] or [\"go\", \"run\", \".\"]" }, "duration": { "type": "number", "description": "Python, Node, Go, Java, Kotlin, Ruby, PHP, C, C++, R and C#: stop the app after this many seconds (GUIs, servers)" }, "path": path }),
             json!(["command"])
         ),
         tool(
             "fast_port",
-            "Record real calls to a hot function and create its Rust crate. Returns the task: write src/lib.rs, then call fast_verify.",
-            json!({ "id": id, "samples": { "type": "integer", "default": 500 }, "path": path }),
+            "Record real calls to a hot function and create its port (C++ for Python apps, else a Rust crate). Returns the task and lib_rs, the file to write; then call fast_verify.",
+            json!({ "id": id, "samples": { "type": "integer", "default": 500 }, "backend": { "type": "string", "enum": ["cpp", "rust"], "description": "What the port is written in (default: cpp for Python apps on Linux and macOS, else rust)" }, "path": path }),
             json!([])
         ),
         tool(
             "fast_verify",
-            "Release-build the Rust port and replay every recorded call against it. Returns compile errors or mismatches to fix.",
+            "Release-build the port and replay every recorded call against it. Returns compile errors or mismatches to fix.",
             json!({ "id": id, "path": path }),
             json!([])
         ),
         tool(
             "fast_enable",
-            "Switch the app over to a verified Rust port (reversible).",
+            "Switch the app over to a verified port (reversible).",
             json!({ "id": id, "path": path, "force": { "type": "boolean" } }),
             json!([])
         ),
@@ -52,7 +53,7 @@ fn tools() -> Value {
         ),
         tool(
             "fast_bench",
-            "Time the whole app, original code vs Rust ports, in rounds that run the original twice (an A/A control for noise) and Rust once; wall and CPU time.",
+            "Time the whole app, original code vs the ports, in rounds that run the original twice (an A/A control for noise) and the ports once; wall and CPU time.",
             json!({ "runs": { "type": "integer", "default": 5, "description": "rounds" }, "path": path }),
             json!([])
         ),
@@ -90,7 +91,13 @@ fn call(params: &Value) -> Result<Value> {
         }
         "fast_port" => {
             let samples = args["samples"].as_u64().unwrap_or(500) as usize;
-            serde_json::to_value(pipeline::port(&root, id, samples)?)?
+            let backend = match args["backend"].as_str() {
+                Some("cpp") => Some(Backend::Cpp),
+                Some("rust") => Some(Backend::Rust),
+                Some(other) => anyhow::bail!("backend is cpp or rust, not {other:?}"),
+                None => None,
+            };
+            serde_json::to_value(pipeline::port_with(&root, id, samples, backend)?)?
         }
         "fast_verify" => {
             let (id, v) = pipeline::verify(&root, id)?;

@@ -1,6 +1,6 @@
 //! Everything fast-anything knows about a project, kept in <project>/.fast/state.json.
 
-use crate::backend::Lang;
+use crate::backend::{Backend, Lang};
 use crate::bench::BenchResult;
 use crate::hotspot::Hotspot;
 use crate::util;
@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const GITIGNORE: &str = "# fast-anything: commit ports/*/src and Cargo.toml (your Rust ports); skip the rest\n\
+const GITIGNORE: &str = "# fast-anything: commit your ports (Rust: ports/*/src and Cargo.toml; C++: ports/*/*.cpp, *.h and fa/); skip the rest\n\
 target/\nlib/\nbin/\nbackup/\nhook/\nchildren/\nrunner.*\nrecorder.*\nDescribe.java\n*.txt\njob-*.json\nprofile.*\n*.pprof\nverify.json\n*.jsonl\n*.meta.json\n*.log\njob-*.R\nstartup.R\nbridge.R\nRprof.out*\n*.rds\n";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -55,6 +55,9 @@ pub struct Port {
     /// in the file). When one of them is gone, the original changed and the port may be stale.
     #[serde(default)]
     pub sources: Vec<String>,
+    /// What the port is written in (ports from before C++ existed are Rust).
+    #[serde(default)]
+    pub backend: Backend,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -76,6 +79,8 @@ pub struct Verify {
     pub lang: Lang,
     /// Hash of the crate's sources this result is for (see backend::source_hash).
     pub source_hash: Option<String>,
+    /// What the verified port is written in (see Port::backend).
+    pub backend: Backend,
 }
 
 /// The forms a source may take in the file: as recorded, or with const and let swapped (a Node

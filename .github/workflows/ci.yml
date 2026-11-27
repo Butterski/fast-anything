@@ -60,8 +60,23 @@ jobs:
         run: |
           fa=../../target/release/fast-anything
           $fa scan -- python app.py
-          $fa port
+          $fa port --backend rust
           cp reference/lib.rs .fast/ports/$(ls .fast/ports)/src/lib.rs
+          $fa verify
+          $fa enable
+          python app.py
+          $fa bench --runs 2
+          $fa report
+          $fa disable
+          git diff --exit-code fuzzy.py
+      - name: end to end on the demo, C++ port (reference port instead of an agent)
+        if: runner.os != 'Windows' && matrix.python != '3.10'
+        working-directory: examples/fuzzy-dedupe
+        run: |
+          fa=../../target/release/fast-anything
+          $fa scan -- python app.py
+          $fa port --backend cpp
+          cp reference/port.cpp .fast/ports/$(ls .fast/ports)/port.cpp
           $fa verify
           $fa enable
           python app.py

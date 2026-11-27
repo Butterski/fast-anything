@@ -1,5 +1,5 @@
 ---
-description: Speed up this app by porting its hottest functions to Rust (fast-anything)
+description: Speed up this app by porting its hottest functions to C++ or Rust (fast-anything)
 argument-hint: "[command that runs the app, e.g. python app.py]"
 ---
 

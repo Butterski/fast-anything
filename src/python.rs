@@ -360,7 +360,7 @@ fn rust_type_at(
 }
 
 /// Rust element type for a NumPy dtype in NDArray[...]: np.float64 -> f64.
-fn numpy_elem(dtype: &str) -> Option<&'static str> {
+pub(crate) fn numpy_elem(dtype: &str) -> Option<&'static str> {
     let d = dtype.trim_start_matches("numpy.").trim_start_matches("np.");
     Some(match d {
         "float64" | "double" => "f64",
@@ -453,7 +453,7 @@ fn base64_decode(text: &str) -> Option<Vec<u8>> {
 }
 
 /// Split "a,b[c,d],e" on top-level commas.
-fn split_top(s: &str) -> Vec<String> {
+pub(crate) fn split_top(s: &str) -> Vec<String> {
     let (mut depth, mut cur, mut out) = (0, String::new(), vec![]);
     for c in s.chars() {
         match c {
@@ -484,7 +484,7 @@ fn ident(name: &str) -> String {
 
 /// Unescape a single Python string literal (as emitted by `ast.unparse`, e.g. `'\\n'`, `"don't"`).
 /// Returns None for compound expressions (`"a" + "b"`), prefixes (`b"..."`), or unknown escapes.
-fn parse_py_str_literal(v: &str) -> Option<String> {
+pub(crate) fn parse_py_str_literal(v: &str) -> Option<String> {
     let quote = match v.as_bytes() {
         [q @ (b'\'' | b'"'), .., end] if v.len() >= 2 && *end == *q => *q as char,
         _ => return None,
@@ -596,7 +596,7 @@ fn signature_default(p: &crate::hotspot::Param, rust_ty: &str) -> Option<String>
 }
 
 /// The annotation names this class (as a whole word: Point in list[Point], not in PointCloud).
-fn mentions(annotation: Option<&str>, class: &str) -> bool {
+pub(crate) fn mentions(annotation: Option<&str>, class: &str) -> bool {
     annotation.is_some_and(|a| a.split(|c: char| !c.is_alphanumeric() && c != '_').any(|w| w == class))
 }
 
@@ -951,11 +951,14 @@ pub fn verify(ctx: &Ctx, port: &Port) -> Result<Verify> {
 
 // ------------------------------------------------------------------ the shim
 
-/// Lines appended to the module (between markers) that swap in the Rust function.
+/// Lines appended to the module (between markers) that swap in the ported function.
 pub fn shim(port: &Port, lib_rel: &str) -> String {
     let f = &port.func;
     [
-        "# Uses the verified Rust port. FAST_ANYTHING_DISABLE=1 runs the Python above instead.",
+        &format!(
+            "# Uses the verified {} port. FAST_ANYTHING_DISABLE=1 runs the Python above instead.",
+            port.backend.label()
+        ),
         &format!("# Undo with:  fast-anything disable {}", port.id),
         "def _fast_anything_load():",
         "    import os, sys",
@@ -1150,6 +1153,7 @@ mod tests {
             owner: None,
             line: 1,
             sources: vec![],
+            backend: crate::backend::Backend::Rust,
         }
     }
 

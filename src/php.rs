@@ -420,6 +420,7 @@ mod tests {
             owner: None,
             line: 3,
             sources: vec![],
+            backend: crate::backend::Backend::Rust,
         };
         enable(&ctx, &port).unwrap();
         // without the port's library, the bridge doesn't load and the PHP version runs

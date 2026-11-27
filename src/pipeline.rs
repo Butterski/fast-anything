@@ -1,6 +1,6 @@
 //! The steps (scan, port, verify, enable, bench, report) shared by the CLI and the MCP server.
 
-use crate::backend::{self, Lang};
+use crate::backend::{self, Backend, Lang};
 use crate::bench::{self, BenchResult};
 use crate::hotspot::{self, Hotspot};
 use crate::report::{self, ReportOut};
@@ -91,12 +91,21 @@ pub struct PortOut {
     pub calls_seen: u64,
     pub skipped: usize,
     pub task: String,
+    pub backend: Backend,
 }
 
+/// A Rust port, as upstream fast-anything makes them (its tests rely on this).
+#[cfg(test)]
 pub fn port(root: &Path, id: Option<&str>, samples: usize) -> Result<PortOut> {
+    port_with(root, id, samples, Some(Backend::Rust))
+}
+
+/// Record a function's calls and set up its port in `backend` (default: Backend::choose).
+pub fn port_with(root: &Path, id: Option<&str>, samples: usize, backend: Option<Backend>) -> Result<PortOut> {
     let mut ctx = Ctx::open(root)?;
     let exe = ctx.runtime()?.to_string();
     let lang = ctx.state.lang;
+    let backend = Backend::choose(lang, backend)?;
     let hs = pick(&ctx.state.hotspots, id)?.clone();
     if !hs.portable() {
         bail!("{} can't be ported yet: {}", hs.id, hs.blockers.join("; "));
@@ -104,6 +113,23 @@ pub fn port(root: &Path, id: Option<&str>, samples: usize) -> Result<PortOut> {
     let module = hs.module.clone().unwrap_or_default();
     let crate_rel = format!(".fast/ports/{}", hs.id.replace([':', '/', '\\'], "."));
     let dir = ctx.root.join(&crate_rel);
+    if let Some(old) = ctx.state.ports.get(&hs.id).filter(|p| p.backend != backend && dir.exists()) {
+        ensure!(
+            !old.enabled,
+            "{} is switched on: run  fast-anything disable {}  before porting it to {}",
+            hs.id,
+            hs.id,
+            backend.label()
+        );
+        let name = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let aside = ctx.fast.join("backup").join(format!("{name}.{}", old.backend.name()));
+        if aside.exists() {
+            fs::remove_dir_all(&aside)?;
+        }
+        fs::create_dir_all(ctx.fast.join("backup"))?;
+        fs::rename(&dir, &aside).with_context(|| format!("moving the {} port aside", old.backend.label()))?;
+        ui::warn(format!("{} had a {} port; it's kept in {}", hs.id, old.backend.label(), aside.display()));
+    }
     fs::create_dir_all(&dir)?;
 
     ui::step(format!("running the app again to record real calls to {}", ui::bold(&hs.id)));
@@ -111,7 +137,7 @@ pub fn port(root: &Path, id: Option<&str>, samples: usize) -> Result<PortOut> {
     let rec = lang.record(&ctx, &exe, &app_args, &hs, &dir.join("recordings.jsonl"), samples.max(1))?;
     if rec.mutates {
         bail!(
-            "{} changes its arguments in place (seen while recording). A Rust port can only return a value, so it would drop those changes. Have the function return the new value instead, then scan again.",
+            "{} changes its arguments in place (seen while recording). A port can only return a value, so it would drop those changes. Have the function return the new value instead, then scan again.",
             hs.id
         );
     }
@@ -148,6 +174,7 @@ pub fn port(root: &Path, id: Option<&str>, samples: usize) -> Result<PortOut> {
         owner: hs.owner.clone(),
         line: hs.line,
         sources: crate::state::verbatim(&text, &sources),
+        backend,
     };
     backend::hold_out(&dir.join("recordings.jsonl"), &ctx.holdout(&port))?;
     let task = lang.scaffold(&ctx, &hs, &helpers, &port)?;
@@ -155,13 +182,17 @@ pub fn port(root: &Path, id: Option<&str>, samples: usize) -> Result<PortOut> {
     ctx.save()?;
     Ok(PortOut {
         id: hs.id,
-        lib_rs: dir.join("src").join(if lang.c_bridge() { "port.rs" } else { "lib.rs" }),
+        lib_rs: match backend {
+            Backend::Cpp => dir.join("port.cpp"),
+            Backend::Rust => dir.join("src").join(if lang.c_bridge() { "port.rs" } else { "lib.rs" }),
+        },
         task_md: dir.join("TASK.md"),
         crate_dir: dir,
         recorded: rec.kept,
         calls_seen: rec.calls,
         skipped: rec.skipped,
         task,
+        backend,
     })
 }
 
@@ -169,7 +200,7 @@ pub fn verify(root: &Path, id: Option<&str>) -> Result<(String, Verify)> {
     let mut ctx = Ctx::open(root)?;
     let id = ctx.resolve_port(id)?;
     let port = ctx.state.ports[&id].clone();
-    let source_hash = backend::source_hash(&ctx.crate_dir(&port))?;
+    let source_hash = backend::port_hash(&ctx.crate_dir(&port), port.backend)?;
     if ctx.stale(&port) {
         ui::warn(format!("{} changed since {id} was recorded: {}", port.file, stale_hint(&id)));
     }
@@ -178,9 +209,10 @@ pub fn verify(root: &Path, id: Option<&str>) -> Result<(String, Verify)> {
         Err(log) => Verify { built: false, build_log: Some(log), ..Verify::default() },
         Ok(_) => {
             ui::step(format!(
-                "replaying {} recorded call{} against the Rust port",
+                "replaying {} recorded call{} against the {} port",
                 port.recorded,
-                if port.recorded == 1 { "" } else { "s" }
+                if port.recorded == 1 { "" } else { "s" },
+                port.backend.label()
             ));
             let visible = util::count_lines(&ctx.crate_dir(&port).join("recordings.jsonl"));
             let mut v = port.lang.verify(&ctx, &port)?;
@@ -191,6 +223,7 @@ pub fn verify(root: &Path, id: Option<&str>) -> Result<(String, Verify)> {
     let mut v = v;
     v.lang = port.lang;
     v.source_hash = Some(source_hash);
+    v.backend = port.backend;
     if !v.ok() && port.enabled {
         port.lang.disable(&ctx, &port)?;
         if let Some(p) = ctx.state.ports.get_mut(&id) {
@@ -223,20 +256,20 @@ pub fn verify_all(root: &Path) -> Result<Vec<(String, Verify)>> {
 /// What to do about a port whose original changed after it was recorded.
 pub fn stale_hint(id: &str) -> String {
     format!(
-        "its recorded calls and Rust may be out of date. Run  fast-anything port {id}  to record again, update the Rust, then verify (or --force)"
+        "its recorded calls and port may be out of date. Run  fast-anything port {id}  to record again, update the port, then verify (or --force)"
     )
 }
 
 /// What to do about a port that's right but slower than the original.
 pub fn slower_hint() -> &'static str {
-    "calling into Rust costs more than this function's work, so it won't be switched on. Port its caller instead (fewer, bigger calls), or  enable --force"
+    "calling into the port costs more than this function's work, so it won't be switched on. Port its caller instead (fewer, bigger calls), or  enable --force"
 }
 
 /// Why a port too cheap to time (see Verify::too_cheap) isn't switched on.
 pub fn too_cheap_hint(id: &str, v: &Verify) -> String {
     let m = v.micro.unwrap_or_default();
     format!(
-        "{id} takes about as long as reading the clock ({} per call in {}, the clock {}), so verify can't tell whether Rust saves anything: {}",
+        "{id} takes about as long as reading the clock ({} per call in {}, the clock {}), so verify can't tell whether the port saves anything: {}",
         util::nanos(m.original_ns),
         v.lang.label(),
         util::nanos(m.clock_ns),
@@ -249,7 +282,7 @@ pub fn too_cheap_hint(id: &str, v: &Verify) -> String {
 fn crate_needs_verify(ctx: &Ctx, port: &Port) -> Result<bool> {
     let Some(verify) = &port.verify else { return Ok(true) };
     let Some(expected) = verify.source_hash.as_deref() else { return Ok(false) };
-    Ok(backend::source_hash(&ctx.crate_dir(port))? != expected)
+    Ok(backend::port_hash(&ctx.crate_dir(port), port.backend)? != expected)
 }
 
 pub fn enable(root: &Path, id: Option<&str>, force: bool) -> Result<String> {
@@ -264,14 +297,22 @@ pub fn enable(root: &Path, id: Option<&str>, force: bool) -> Result<String> {
         bail!("{id} hasn't passed verify yet: run  fast-anything verify {id}  (or --force)");
     }
     if !force && crate_needs_verify(&ctx, &port)? {
-        bail!("{id}'s Rust changed since it passed verify: run  fast-anything verify {id}  (or --force)");
+        bail!(
+            "{id}'s {} changed since it passed verify: run  fast-anything verify {id}  (or --force)",
+            port.backend.label()
+        );
     }
     // too cheap to time comes first: a few-ns function measures 1.0x either way, so "slower" is noise
     if let Some(v) = port.verify.as_ref().filter(|v| v.too_cheap() && !force) {
         bail!("{}", too_cheap_hint(&id, v));
     }
     if let Some(m) = port.verify.as_ref().filter(|v| v.slower() && !force).and_then(|v| v.micro) {
-        bail!("{id} is {} slower per call in Rust: {}", util::times(1.0 / m.speedup), slower_hint());
+        bail!(
+            "{id} is {} slower per call in {}: {}",
+            util::times(1.0 / m.speedup),
+            port.backend.label(),
+            slower_hint()
+        );
     }
     port.lang.enable(&ctx, &port)?;
     if let Some(p) = ctx.state.ports.get_mut(&id) {
@@ -331,8 +372,10 @@ pub fn build_all(root: &Path) -> Result<()> {
         if port.enabled && crate_needs_verify(&ctx, port)? {
             failed += 1;
             ui::error(format!(
-                "{} is switched on and its Rust hasn't passed verify in its current state; run  fast-anything verify {}",
-                port.id, port.id
+                "{} is switched on and its {} port hasn't passed verify in its current state; run  fast-anything verify {}",
+                port.id,
+                port.backend.label(),
+                port.id
             ));
             continue;
         }
@@ -393,21 +436,38 @@ pub fn report(root: &Path) -> Result<ReportOut> {
     report::write(&Ctx::open(root)?)
 }
 
+/// The file the agent edits, as feedback names it.
+fn port_file(v: &Verify) -> &'static str {
+    match v.backend {
+        Backend::Cpp => "port.cpp",
+        Backend::Rust if v.lang.c_bridge() => "src/port.rs",
+        Backend::Rust => "src/lib.rs",
+    }
+}
+
 /// What the agent gets told after a failed attempt, or a right one that's slower than the original.
 pub fn feedback(v: &Verify) -> String {
     if v.ok()
         && let Some(m) = v.micro.filter(|_| v.slower())
     {
+        let advice = match v.backend {
+            Backend::Cpp => {
+                "take inputs by const reference, no allocation or copying per call, `reserve`, fast paths for common cases, hot loops the compiler can vectorize"
+            }
+            Backend::Rust => {
+                "borrow inputs instead of converting them, no allocation or cloning per call, `with_capacity`, fast paths for common cases"
+            }
+        };
         return format!(
             "\n\n## Your last attempt is right but slow\n\n\
-             All {} cases match, but a call takes {} in Rust against {} in the original ({} slower).\n\
-             Make it faster without changing any result: borrow inputs instead of converting them, \
-             no allocation or cloning per call, `with_capacity`, fast paths for common cases.\n{}",
+             All {} cases match, but a call takes {} in {} against {} in the original ({} slower).\n\
+             Make it faster without changing any result: {advice}.\n\nFix {}.\n",
             v.total,
             util::nanos(m.rust_ns),
+            v.backend.label(),
             util::nanos(m.original_ns),
             util::times(1.0 / m.speedup),
-            if v.lang.c_bridge() { "\nFix src/port.rs.\n" } else { "\nFix src/lib.rs.\n" }
+            port_file(v)
         );
     }
     let mut out = String::from("\n\n## Your last attempt failed\n\n");
@@ -426,7 +486,7 @@ pub fn feedback(v: &Verify) -> String {
             );
         }
     }
-    out.push_str(if v.lang.c_bridge() { "\nFix src/port.rs.\n" } else { "\nFix src/lib.rs.\n" });
+    out.push_str(&format!("\nFix {}.\n", port_file(v)));
     out
 }
 
@@ -444,7 +504,11 @@ pub fn agent_port(root: &Path, id: &str, agent_spec: &str, attempts: usize) -> R
         if let Some(v) = &last {
             prompt.push_str(&feedback(v));
         }
-        ui::step(format!("{} is writing the Rust port (attempt {attempt}/{attempts})", ui::bold(agent_spec)));
+        ui::step(format!(
+            "{} is writing the {} port (attempt {attempt}/{attempts})",
+            ui::bold(agent_spec),
+            port.backend.label()
+        ));
         agent::run(agent_spec, &dir, &prompt, &dir.join("agent.log"))?;
         let (_, v) = verify(root, Some(id))?;
         if !ui::quiet() {
@@ -454,7 +518,7 @@ pub fn agent_port(root: &Path, id: &str, agent_spec: &str, attempts: usize) -> R
             return Ok(v);
         }
         if v.ok() && right.as_ref().is_none_or(|(best, _)| speedup(&v) > speedup(best)) {
-            right = Some((v.clone(), snapshot(&dir)?));
+            right = Some((v.clone(), snapshot(&dir, port.backend)?));
         }
         last = Some(v);
     }
@@ -464,7 +528,7 @@ pub fn agent_port(root: &Path, id: &str, agent_spec: &str, attempts: usize) -> R
         ui::step(format!("putting back the right attempt of {id} ({} per call)", util::times(speedup(&best))));
         let ctx = Ctx::open(root)?;
         let port = ctx.state.ports.get(id).with_context(|| format!("{id} isn't ported"))?;
-        restore_snapshot(&ctx.crate_dir(port), &files)?;
+        restore_snapshot(&ctx.crate_dir(port), &files, port.backend)?;
         let (_, v) = verify(root, Some(id))?;
         return Ok(v);
     }
@@ -475,7 +539,8 @@ fn speedup(v: &Verify) -> f64 {
     v.micro.map(|m| m.speedup).unwrap_or(0.0)
 }
 
-/// Cargo inputs for one attempt; recordings, TASK.md and agent.log are deliberately excluded.
+/// Port sources for one attempt (Cargo inputs, or the C++ sources); recordings, TASK.md and
+/// agent.log are deliberately excluded.
 type Snapshot = Vec<(PathBuf, Vec<u8>)>;
 
 fn snapshot_files(dir: &Path, out: &mut Snapshot) -> Result<()> {
@@ -490,8 +555,14 @@ fn snapshot_files(dir: &Path, out: &mut Snapshot) -> Result<()> {
     Ok(())
 }
 
-fn snapshot(dir: &Path) -> Result<Snapshot> {
+fn snapshot(dir: &Path, backend: Backend) -> Result<Snapshot> {
     let mut out = vec![];
+    if backend == Backend::Cpp {
+        for path in crate::cpp::source_files(dir)? {
+            out.push((path.clone(), fs::read(&path)?));
+        }
+        return Ok(out);
+    }
     for name in ["Cargo.toml", "Cargo.lock", "build.rs"] {
         let path = dir.join(name);
         if path.is_file() {
@@ -505,20 +576,29 @@ fn snapshot(dir: &Path) -> Result<Snapshot> {
     Ok(out)
 }
 
-fn restore_snapshot(dir: &Path, files: &Snapshot) -> Result<()> {
-    for name in ["Cargo.lock", "build.rs"] {
-        let path = dir.join(name);
-        if !files.iter().any(|(saved, _)| saved == &path) {
-            match fs::remove_file(&path) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e).with_context(|| format!("removing {}", path.display())),
+fn restore_snapshot(dir: &Path, files: &Snapshot, backend: Backend) -> Result<()> {
+    if backend == Backend::Cpp {
+        // sources an attempt added after the snapshot go too
+        for path in crate::cpp::source_files(dir)? {
+            if !files.iter().any(|(saved, _)| saved == &path) {
+                fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
             }
         }
-    }
-    let src = dir.join("src");
-    if src.exists() {
-        fs::remove_dir_all(&src)?;
+    } else {
+        for name in ["Cargo.lock", "build.rs"] {
+            let path = dir.join(name);
+            if !files.iter().any(|(saved, _)| saved == &path) {
+                match fs::remove_file(&path) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(e).with_context(|| format!("removing {}", path.display())),
+                }
+            }
+        }
+        let src = dir.join("src");
+        if src.exists() {
+            fs::remove_dir_all(&src)?;
+        }
     }
     for (path, bytes) in files {
         if let Some(parent) = path.parent() {
@@ -529,6 +609,8 @@ fn restore_snapshot(dir: &Path, files: &Snapshot) -> Result<()> {
     Ok(())
 }
 
+/// `backend`: what the ports are written in (default: Backend::choose).
+#[allow(clippy::too_many_arguments)]
 pub fn go(
     root: &Path,
     command: Vec<String>,
@@ -537,6 +619,7 @@ pub fn go(
     attempts: usize,
     runs: usize,
     samples: usize,
+    backend: Option<Backend>,
 ) -> Result<()> {
     let scanned = scan(root, command, None)?;
     show::scan(&scanned);
@@ -549,12 +632,15 @@ pub fn go(
     );
 
     let Some(agent_spec) = agent_spec else {
+        let mut label = "Rust";
         for id in &picks {
-            show::port(&port(root, Some(id), samples)?, false);
+            let ported = port_with(root, Some(id), samples, backend)?;
+            label = ported.backend.label();
+            show::port(&ported, false);
         }
         ui::line("");
         ui::line(format!(
-            "  Now write the Rust: hand each TASK.md to your coding agent (or pass {}), then:",
+            "  Now write the {label}: hand each TASK.md to your coding agent (or pass {}), then:",
             ui::bold("--agent claude")
         ));
         for id in &picks {
@@ -566,19 +652,22 @@ pub fn go(
 
     let mut enabled = 0;
     for id in &picks {
-        show::port(&port(root, Some(id), samples)?, false);
+        let ported = port_with(root, Some(id), samples, backend)?;
+        let label = ported.backend.label();
+        let file = ported.lib_rs.strip_prefix(&ported.crate_dir).unwrap_or(&ported.lib_rs).display().to_string();
+        show::port(&ported, false);
         let v = agent_port(root, id, agent_spec, attempts)?;
         if v.ok() && v.too_cheap() {
             ui::warn(too_cheap_hint(id, &v));
         } else if v.ok() && v.slower() {
-            ui::warn(format!("{id}: right, but slower in Rust per call; {}", slower_hint()));
+            ui::warn(format!("{id}: right, but slower in {label} per call; {}", slower_hint()));
         } else if v.ok() {
             enable(root, Some(id), false)?;
-            ui::ok(format!("{} now runs in Rust", ui::bold(id)));
+            ui::ok(format!("{} now runs in {label}", ui::bold(id)));
             enabled += 1;
         } else {
             ui::warn(format!(
-                "{id}: not right after {attempts} attempts; fix src/lib.rs by hand (see TASK.md), then  fast-anything verify {id}"
+                "{id}: not right after {attempts} attempts; fix {file} by hand (see TASK.md), then  fast-anything verify {id}"
             ));
         }
     }
@@ -658,6 +747,7 @@ mod tests {
             owner: None,
             line: 1,
             sources: vec![],
+            backend: crate::backend::Backend::Rust,
         };
         (root, port)
     }
@@ -707,7 +797,7 @@ mod tests {
         for name in ["TASK.md", "recordings.jsonl", "agent.log"] {
             fs::write(dir.join(name), "before\n").unwrap();
         }
-        let saved = snapshot(&dir).unwrap();
+        let saved = snapshot(&dir, Backend::Rust).unwrap();
 
         fs::write(dir.join("Cargo.toml"), "later manifest\n").unwrap();
         fs::write(dir.join("Cargo.lock"), "later lock\n").unwrap();
@@ -719,7 +809,7 @@ mod tests {
             fs::write(dir.join(name), "later evidence\n").unwrap();
         }
 
-        restore_snapshot(&dir, &saved).unwrap();
+        restore_snapshot(&dir, &saved, Backend::Rust).unwrap();
         assert_eq!(fs::read_to_string(dir.join("Cargo.toml")).unwrap(), "best manifest\n");
         assert_eq!(fs::read_to_string(dir.join("Cargo.lock")).unwrap(), "best lock\n");
         assert_eq!(fs::read_to_string(dir.join("src/lib.rs")).unwrap(), "best lib\n");
@@ -752,6 +842,7 @@ mod tests {
             owner: None,
             line: 1,
             sources: vec![],
+            backend: crate::backend::Backend::Rust,
         };
         let id = port.id.clone();
         let mut ctx = Ctx::open(&root).unwrap();

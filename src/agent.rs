@@ -1,4 +1,4 @@
-//! Hands TASK.md to a coding agent CLI and lets it edit the crate.
+//! Hands TASK.md to a coding agent CLI and lets it edit the port.
 
 use anyhow::{Context, Result, ensure};
 use std::fs::{self, File};
@@ -15,7 +15,7 @@ pub fn argv(spec: &str) -> Vec<String> {
             "--permission-mode",
             "acceptEdits",
             "--allowedTools",
-            "Read Edit Write Glob Grep Bash(cargo check:*) Bash(cargo build:*) Bash(cargo test:*) Bash(cargo fmt:*)",
+            "Read Edit Write Glob Grep Bash(cargo check:*) Bash(cargo build:*) Bash(cargo test:*) Bash(cargo fmt:*) Bash(c++:*) Bash(g++:*) Bash(clang++:*) Bash(fast-anything verify:*)",
         ],
         "codex" => &["codex", "exec", "--full-auto", "-"],
         _ => &[],

@@ -24,13 +24,24 @@ Rewriting a whole app in Rust costs months, minute-long compiles and gigabytes o
 
 <p align="center"><img src="https://raw.githubusercontent.com/EL4CTEO/fast-anything/main/docs/assets/demo.gif" alt="fast-anything go --agent claude -- python app.py" width="820"></p>
 
+## This fork: C++ ports for Python apps
+
+This fork ([Butterski/fast-anything](https://github.com/Butterski/fast-anything), branch `cpp`) ports the hot functions of **Python apps to C++** on Linux and macOS: the agent writes `port.cpp`, and fast-anything generates the signature (`port.h`) and a CPython stable-ABI module (`glue.cpp` on top of `fa/py.hpp`), builds it with `-O3 -march=native -ffp-contract=off`, and verifies, enables and benchmarks it as it does Rust ports. The other languages keep Rust ports, and `port --backend rust` gives a Python app one too.
+
+- Needs a C++20 compiler (g++ or clang++, or `$CXX`) and the headers of Python 3.11 or newer (Debian/Ubuntu: `apt install build-essential python3-dev`).
+- Python values arrive as C++ values: `str` as `std::u32string` (code points), `int` as `int64_t`, `float` as `double`, `list[T]` as `std::vector<T>`, `dict[K, V]` as `fa::dict<K, V>` (insertion-ordered), `NDArray[np.float64]` as `fa::ndarray<const double>`. Each port's TASK.md has the full list.
+- The GIL is released while a port runs, so it may use threads; SIMD comes from the compiler's vectorizer or from intrinsics.
+- `examples/fuzzy-dedupe/reference/port.cpp` is a reference port: bit-parallel edit distance on threads.
+- No compiler on the host? `docker build -t fast-anything-dev -f docker/dev.Dockerfile docker`, then `docker/dev.sh cargo test` builds and tests inside the image.
+
 ## Install
 
 ```sh
 npm i -g @el4cteo/fast-anything      # or: cargo install fast-anything
+cargo install --git https://github.com/Butterski/fast-anything --branch cpp   # this fork
 ```
 
-Ports are compiled with your Rust toolchain ([rustup](https://rustup.rs)).
+Rust ports are compiled with your Rust toolchain ([rustup](https://rustup.rs)), C++ ports with g++ or clang++.
 
 ## Use
 
