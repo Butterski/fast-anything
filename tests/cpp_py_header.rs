@@ -5,22 +5,33 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Python's include directory, when it holds Python.h.
+/// Python's include directory, when it holds Python.h of Python 3.11 or newer (the stable ABI the
+/// header is built for).
 fn python_include() -> Option<PathBuf> {
-    let out =
-        Command::new("python3").args(["-c", "import sysconfig; print(sysconfig.get_path('include'))"]).output().ok()?;
-    let dir = PathBuf::from(String::from_utf8(out.stdout).ok()?.trim());
-    (out.status.success() && dir.join("Python.h").is_file()).then_some(dir)
+    let out = Command::new("python3")
+        .args(["-c", "import sys, sysconfig; print(sys.version_info >= (3, 11)); print(sysconfig.get_path('include'))"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8(out.stdout).ok()?;
+    let mut lines = text.lines();
+    if !out.status.success() || lines.next() != Some("True") {
+        return None;
+    }
+    let dir = PathBuf::from(lines.next()?.trim());
+    dir.join("Python.h").is_file().then_some(dir)
 }
 
-fn has_cxx() -> bool {
-    Command::new("c++").arg("--version").output().is_ok_and(|o| o.status.success())
+/// The C++ compiler, as the port build picks it: $CXX, else c++.
+fn cxx() -> String {
+    std::env::var("CXX").ok().filter(|c| !c.trim().is_empty()).unwrap_or_else(|| "c++".into())
 }
 
 #[test]
 fn header_builds_a_module_that_converts_parses_and_raises_like_python() {
-    let Some(include) = python_include().filter(|_| has_cxx()) else {
-        eprintln!("no c++ or Python headers, skipping");
+    // C++ ports are built on Linux and macOS only (see Backend::choose)
+    let ready = !cfg!(windows) && Command::new(cxx()).arg("--version").output().is_ok_and(|o| o.status.success());
+    let Some(include) = python_include().filter(|_| ready) else {
+        eprintln!("no c++ or Python 3.11+ headers (or Windows), skipping");
         return;
     };
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -48,7 +59,7 @@ fn header_builds_a_module_that_converts_parses_and_raises_like_python() {
             .map(|(name, flags)| {
                 let out = dir.join(name);
                 fs::create_dir_all(&out).unwrap();
-                let mut cmd = Command::new("c++");
+                let mut cmd = Command::new(cxx());
                 cmd.args(["-std=c++20", "-fPIC", "-shared", "-fvisibility=hidden", "-pthread"])
                     .args(["-Wall", "-Wextra", "-Wno-unused-parameter", "-Werror"])
                     .args(flags)

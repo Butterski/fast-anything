@@ -1,11 +1,12 @@
 # Changelog
 
-## Fork (Butterski/fast-anything, branch cpp): C++ ports for Python apps
+## Fork (Butterski/fast-anything): C++ ports for Python apps
 
 - Python apps on Linux and macOS get C++ ports by default (`port --backend cpp|rust`, also on `go` and MCP `fast_port`): the agent writes `port.cpp`; `port.h` and `glue.cpp` are generated on top of `fa/py.hpp`, a CPython stable-ABI (3.11+) glue header; the build is `c++ -std=c++20 -O3 -march=native -ffp-contract=off -fno-math-errno`. Verify, enable, bench and the agent loop work as for Rust ports; other languages keep Rust.
 - `examples/fuzzy-dedupe/reference/port.cpp`: a reference C++ port (bit-parallel edit distance on threads) and a CI step that runs it end to end.
 - `doctor` checks for a C++ compiler and the Python headers; wording names the port's language instead of always Rust.
-- `docker/dev.Dockerfile` and `docker/dev.sh`: build and test without a toolchain on the host.
+- `docker/dev.Dockerfile` (g++ and clang++, Python headers, NumPy, Rust) and `docker/dev.sh`: build and test without a toolchain on the host.
+- README, plugin manifests and marketplace name this fork; the header test runs with `$CXX` and skips Windows and Python below 3.11.
 
 ## 0.8.9
 

@@ -1,14 +1,16 @@
 {
   "name": "fast-anything",
   "version": "0.8.9",
-  "description": "Find the slow 5% of your app, port just that to Rust, and prove it still behaves the same.",
+  "description": "Find the slow 5% of your app, port just that to C++ with SIMD (or Rust), and prove it still behaves the same.",
   "author": {
-    "name": "EL4CTEO"
+    "name": "Butterski"
   },
-  "homepage": "https://github.com/EL4CTEO/fast-anything",
-  "repository": "https://github.com/EL4CTEO/fast-anything",
+  "homepage": "https://github.com/Butterski/fast-anything",
+  "repository": "https://github.com/Butterski/fast-anything",
   "license": "MIT",
   "keywords": [
+    "cpp",
+    "simd",
     "rust",
     "python",
     "nodejs",

@@ -1,15 +1,17 @@
 {
   "name": "fast-anything",
   "version": "0.8.9",
-  "description": "Find the slow 5% of your app, port just that to Rust, and prove it still behaves the same.",
+  "description": "Find the slow 5% of your app, port just that to C++ with SIMD (or Rust), and prove it still behaves the same.",
   "author": {
-    "name": "EL4CTEO",
-    "url": "https://github.com/EL4CTEO"
+    "name": "Butterski",
+    "url": "https://github.com/Butterski"
   },
-  "homepage": "https://github.com/EL4CTEO/fast-anything",
-  "repository": "https://github.com/EL4CTEO/fast-anything",
+  "homepage": "https://github.com/Butterski/fast-anything",
+  "repository": "https://github.com/Butterski/fast-anything",
   "license": "MIT",
   "keywords": [
+    "cpp",
+    "simd",
     "rust",
     "python",
     "nodejs",
@@ -24,14 +26,14 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "fast-anything",
-    "shortDescription": "Port your app's hottest functions to Rust and prove they behave the same.",
-    "longDescription": "Profiles Python, Node, TypeScript, Ruby, Java, Kotlin, Go, PHP, C, C++, C# and R apps, records real calls to the hottest functions, has your agent port only those to Rust, replays every call to prove the port matches, and swaps it in reversibly.",
+    "shortDescription": "Port your app's hottest functions to C++ with SIMD (or Rust) and prove they behave the same.",
+    "longDescription": "Profiles Python, Node, TypeScript, Ruby, Java, Kotlin, Go, PHP, C, C++, C# and R apps, records real calls to the hottest functions, has your agent port only those to native code (C++ for Python apps, Rust for the others), replays every call to prove the port matches, and swaps it in reversibly.",
     "category": "Coding",
-    "developerName": "EL4CTEO",
-    "websiteUrl": "https://github.com/EL4CTEO/fast-anything",
+    "developerName": "Butterski",
+    "websiteUrl": "https://github.com/Butterski/fast-anything",
     "logo": "./.claude-plugin/icon.png",
     "defaultPrompt": [
-      "Find the slowest functions in this app and port them to Rust"
+      "Find the slowest functions in this app and port them to C++"
     ]
   }
 }

@@ -1,47 +1,65 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/EL4CTEO/fast-anything/main/docs/assets/wordmark.png" alt="fast-anything" width="520">
+  <img src="docs/assets/wordmark.png" alt="fast-anything" width="520">
 </p>
 
-<p align="center"><b>Don't rewrite it in Rust. Rewrite the 5% that's slow.</b></p>
+<p align="center"><b>Rewrite the 5% that's slow, in C++ with SIMD, and prove it behaves the same.</b></p>
 
 <p align="center">
-  <a href="https://trendshift.io/repositories/371252"><img src="https://trendshift.io/api/badge/repositories/371252" alt="EL4CTEO/fast-anything | Trendshift" width="250" height="55"></a>
-</p>
-
-<p align="center">
-  <a href="https://www.npmjs.com/package/@el4cteo/fast-anything"><img src="https://img.shields.io/npm/v/@el4cteo/fast-anything?color=f74c00&label=npm" alt="npm"></a>
-  <a href="https://crates.io/crates/fast-anything"><img src="https://img.shields.io/crates/v/fast-anything?color=f74c00" alt="crates.io"></a>
-  <a href="https://github.com/EL4CTEO/fast-anything/actions/workflows/ci.yml"><img src="https://github.com/EL4CTEO/fast-anything/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Butterski/fast-anything/actions/workflows/ci.yml"><img src="https://github.com/Butterski/fast-anything/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/ports-C%2B%2B20%20%C2%B7%20SIMD-00599C" alt="Ports in C++20 with SIMD">
   <img src="https://img.shields.io/badge/Python%20%C2%B7%20Node%20%C2%B7%20TypeScript%20%C2%B7%20Ruby%20%C2%B7%20Java%20%C2%B7%20Kotlin%20%C2%B7%20Go%20%C2%B7%20PHP%20%C2%B7%20C%20%C2%B7%20C%2B%2B%20%C2%B7%20C%23%20%C2%B7%20R-2563eb" alt="Python, Node, TypeScript, Ruby, Java, Kotlin, Go, PHP, C, C++, C#, R">
-  <img src="https://img.shields.io/badge/Claude%20Code-plugin-d97757" alt="Claude Code plugin">
   <img src="https://img.shields.io/badge/MCP-server-555" alt="MCP server">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-555" alt="MIT"></a>
 </p>
 
-Rewriting a whole app in Rust costs months, minute-long compiles and gigabytes of `target/`. Most of the runtime sits in a few functions anyway.
+This is a maintained fork of [EL4CTEO/fast-anything](https://github.com/EL4CTEO/fast-anything). fast-anything profiles your app, has your coding agent port only its hottest pure functions to native code, proves each port gives the same results on real recorded calls, and swaps it in, fully reversible.
 
-**fast-anything** finds those functions, has your coding agent port *only them* to Rust, proves the port gives the same results on real recorded calls, and swaps it in. One command, fully reversible.
+Upstream writes those ports in Rust. **This fork writes them in C++, with SIMD where it pays**, the way [RayoMD](https://github.com/Butterski/rayomd) (Markdown to PDF) and [RayoPDF](https://github.com/Butterski/rayopdf) (PDF to Markdown) are optimised, and we maintain it.
 
-<p align="center"><img src="https://raw.githubusercontent.com/EL4CTEO/fast-anything/main/docs/assets/demo.gif" alt="fast-anything go --agent claude -- python app.py" width="820"></p>
+## Status
 
-## This fork: C++ ports for Python apps
+| Your app | Its port |
+|---|---|
+| Python 3.11+ on Linux and macOS | **C++20** (the default): a CPython stable-ABI module, built with `-O3 -march=native` |
+| Python on Windows; Node.js/TypeScript, Ruby, Java, Kotlin, Go, PHP, C, C++, C#, R | Rust, as upstream (C++ for these is on the [roadmap](#roadmap)) |
 
-This fork ([Butterski/fast-anything](https://github.com/Butterski/fast-anything), branch `cpp`) ports the hot functions of **Python apps to C++** on Linux and macOS: the agent writes `port.cpp`, and fast-anything generates the signature (`port.h`) and a CPython stable-ABI module (`glue.cpp` on top of `fa/py.hpp`), builds it with `-O3 -march=native -ffp-contract=off`, and verifies, enables and benchmarks it as it does Rust ports. The other languages keep Rust ports, and `port --backend rust` gives a Python app one too.
+`port --backend rust` gives a Python app a Rust port too.
 
-- Needs a C++20 compiler (g++ or clang++, or `$CXX`) and the headers of Python 3.11 or newer (Debian/Ubuntu: `apt install build-essential python3-dev`).
-- Python values arrive as C++ values: `str` as `std::u32string` (code points), `int` as `int64_t`, `float` as `double`, `list[T]` as `std::vector<T>`, `dict[K, V]` as `fa::dict<K, V>` (insertion-ordered), `NDArray[np.float64]` as `fa::ndarray<const double>`. Each port's TASK.md has the full list.
-- The GIL is released while a port runs, so it may use threads; SIMD comes from the compiler's vectorizer or from intrinsics.
-- `examples/fuzzy-dedupe/reference/port.cpp` is a reference port: bit-parallel edit distance on threads.
-- No compiler on the host? `docker build -t fast-anything-dev -f docker/dev.Dockerfile docker`, then `docker/dev.sh cargo test` builds and tests inside the image.
+## Ports, the RayoMD way
+
+Upstream's proof stays as it is: recorded calls, derived edge cases, held-out calls, and a benchmark with an A/A control. On top of it, ports here follow what the RayoMD and RayoPDF work showed:
+
+- **SIMD, with a plain path next to it.** RayoMD's inline-parse test jumps between the bytes that matter 32 at a time with AVX2 nibble tables, and keeps a byte-at-a-time loop for CPUs without AVX2: essay.md took 10.7% fewer instructions, and every PDF stayed byte for byte the same ([performance.md](https://github.com/Butterski/rayomd/blob/main/docs/development/performance.md), "The inline parse test 32 bytes a step"). RayoPDF computes CRC-32 with PCLMULQDQ folding and Adler-32 with AVX2. Ports here are built with `-O3 -march=native`, and their TASK.md asks for hot loops the compiler can vectorize, or intrinsics behind `#ifdef __AVX2__` / `__ARM_NEON` with a plain loop for the rest.
+- **The same output, proven, before any speed counts.** RayoMD checks each change byte for byte against the PDFs it made before (16 documents in 10 option sets and 2 books for the inline-parse one). Every port here passes verify on all recorded and derived calls before it can be switched on.
+- **Python's float semantics, kept.** `-ffp-contract=off` and no fast-math: the compiler may not fuse or reorder float operations, so results match Python's. A vectorized float sum is allowed only where the original adds in that order.
+- **A better algorithm first, then threads.** The demo's reference port replaces the edit-distance table with a bit-parallel one (a column of 64 cells per machine-word step) and spreads rows over threads. The GIL is released while a port runs.
+
+## Results
+
+AMD Ryzen 5 PRO 4650GE, Ubuntu 26.04 in Docker, g++ 15, Python 3.14, 2026-11-27. Reproduce it from [`examples/fuzzy-dedupe`](examples/fuzzy-dedupe) (`reference/port.cpp` and `reference/lib.rs` stand in for the agent).
+
+| Python fuzzy dedupe (700 names), one call | time | speed-up |
+|---|---:|---:|
+| the Python original | 4,744 ms | 1× |
+| upstream's Rust reference port (edit-distance table, threads) | 11.1 ms | 427× |
+| this fork's C++ reference port (bit-parallel edit distance, threads) | 3.3 ms | 1,454× |
+
+The whole app went from 5.50 s to 38 ms with the C++ port (149×; CPU time 136×). The two reference ports use different algorithms, so the table compares the ports as written, not the languages.
 
 ## Install
 
 ```sh
-npm i -g @el4cteo/fast-anything      # or: cargo install fast-anything
-cargo install --git https://github.com/Butterski/fast-anything --branch cpp   # this fork
+cargo install --git https://github.com/Butterski/fast-anything
 ```
 
-Rust ports are compiled with your Rust toolchain ([rustup](https://rustup.rs)), C++ ports with g++ or clang++.
+The CLI itself is Rust: building it needs [rustup](https://rustup.rs) and a C linker. C++ ports need g++ or clang++ (or `$CXX`) and the headers of the Python your app runs on (Debian/Ubuntu: `sudo apt install build-essential python3-dev`); Rust ports need the Rust toolchain. No toolchain on the host? Build and test in the image instead:
+
+```sh
+docker build -t fast-anything-dev -f docker/dev.Dockerfile docker
+docker/dev.sh cargo test
+```
+
+This fork isn't on npm or crates.io: `npm i -g @el4cteo/fast-anything` and `cargo install fast-anything` install upstream, with Rust ports.
 
 ## Use
 
@@ -54,66 +72,54 @@ Or step by step:
 | command | what it does |
 |---|---|
 | `scan -- <cmd>` | profiles the app, ranks functions by time × how portable they are |
-| `port [id]` | records up to 500 real calls, creates a one-function Rust crate + `TASK.md` |
+| `port [id]` | records up to 500 real calls and creates the port folder + `TASK.md`: C++ for Python apps, else a one-function Rust crate (`--backend cpp\|rust` to choose) |
 | `verify` | release-builds the port and replays every recorded call |
-| `enable` / `disable` | swaps the Rust in or out (one marked block, removed byte for byte) |
-| `bench` | times the whole app in rotated rounds of original, original again (an A/A control for noise) and Rust, plus one warm-up per side (`--runs 5` = 11 original runs, 6 Rust runs); wall and CPU time |
+| `enable` / `disable` | swaps the port in or out (one marked block, removed byte for byte) |
+| `bench` | times the whole app in rotated rounds of original, original again (an A/A control for noise) and ported, plus one warm-up per side (`--runs 5` = 11 original runs, 6 ported runs); wall and CPU time |
 | `report` | markdown + SVG card for your PR |
-| `doctor` | checks Rust, your runtimes and your agents |
+| `doctor` | checks the C++ compiler and Python headers, Rust, your runtimes and your agents |
 
 `--agent` takes `claude`, `codex`, or any command that reads a prompt on stdin. Without it, hand `TASK.md` to whatever you use.
 
+## What a C++ port looks like
+
+`fast-anything port` writes `.fast/ports/<id>/`:
+
+| file | what it is |
+|---|---|
+| `port.cpp` | the function, written by your agent (fast-anything writes a stub once) |
+| `port.h` | the C++ signature, generated from the Python annotations |
+| `glue.cpp`, `fa/py.hpp` | the CPython module: argument parsing like CPython's, conversions, exceptions, the GIL |
+| `TASK.md` | the original, real calls, the rules; `compile_flags.txt` for clangd |
+
+Python values arrive as C++ values: `str` as `std::u32string` (one `char32_t` per code point, so lengths and indexing match Python), `int` as `int64_t`, `float` as `double`, `bytes` as `std::string`, `X | None` as `std::optional`, `list[T]` as `std::vector<T>`, `tuple[A, B]` as `std::tuple`, `dict[K, V]` as `fa::dict<K, V>` (insertion-ordered, like Python's), `set[T]` as `fa::set<T>`, `NDArray[np.float64]` as `fa::ndarray<const double>` (results: `fa::array<double>`), a dataclass parameter as a generated struct. Anything else is a `fa::object`, and then the GIL stays held. A port raises Python exceptions by throwing `fa::value_error`, `fa::key_error`, ... or `fa::error("AnyBuiltinError", "...")`, and `fa::str_method<R>(s, "lower")` runs Python's own string methods for the non-ASCII cases.
+
 ## Proof, not vibes
 
-<p align="center"><img src="https://raw.githubusercontent.com/EL4CTEO/fast-anything/main/docs/assets/verify.gif" alt="verify catches a wrong port" width="820"></p>
+On top of the recorded calls, fast-anything derives extra cases and lets the original answer them: edge cases (NaN, ±infinity, -0.0, zero and ±1, non-ASCII text, empty and up to 16× bigger inputs) and shrunk inputs (tiny and random slices). Nothing is enabled until every case matches: same values (floats within 1e-9 of their size or of the largest value in the same list, -0.0 not 0.0), errors where the original errors. A port that is right but slower per call than the original (calling into it costs more than the work saved) isn't enabled either, nor is one whose original takes about as long as a clock read.
 
-That port looked right but compared bytes instead of characters. 148 of 500 real calls caught it. On top of the recorded calls, fast-anything derives extra cases and lets the original answer them: edge cases (NaN, ±infinity, -0.0, zero and ±1, non-ASCII text, empty and up to 16× bigger inputs) and shrunk inputs (tiny and random slices). Nothing is enabled until every case matches: same values (floats within 1e-9 of their size or of the largest value in the same list, -0.0 not 0.0), errors where the original errors. A port that is right but slower per call than the original (calling into Rust costs more than the work saved) isn't enabled either, nor is one whose original takes about as long as a clock read (where each call is timed on its own: C, C++, Go, Java, Kotlin, PHP, C#), since the per-call times can't show a saving there. `FAST_ANYTHING_DISABLE=1` runs the original any time.
-
-Every 5th recorded call (from 5 calls up) is held out of the crate folder the agent works in: verify replays it too but reports a mismatch there without the values, so a port that special-cases the calls it was shown still fails. verify deletes its working copy of those calls when it's done. It's a guard against a port fitted to the calls it was shown, not a sandbox: an agent that goes looking can still read them in `.fast/holdout`.
-
-## Results
-
-Real runs on an i5-10500, Windows 11 (C and C++: a 4-core GitHub Actions Linux runner). Reproduce them from [`examples/`](examples).
-
-| app | before | after |
-|---|---|---|
-| Python fuzzy dedupe (700 names) | 4.91s | **42ms, 116×** |
-| TypeScript fuzzy dedupe (2,000 names) | 3.11s | **155ms, 20×** |
-| PHP fuzzy dedupe (600 names) | 2.94s | **53ms, 55×** |
-| Go fuzzy dedupe (3,000 names) | 3.02s | **144ms, 21×** |
-| Ruby fuzzy dedupe (400 names) | 3.13s | **228ms, 14×** |
-| C# fuzzy dedupe (4,000 names) | 4.03s | **312ms, 13×** |
-| Java fuzzy dedupe (4,000 names) | 3.50s | **1.18s, 3×** (11× on the function; the rest is JVM startup) |
-| C mandelbrot (8 zoom levels) | 431ms | **127ms, 3.4×** |
-| C++ fuzzy dedupe (6,000 names) | 3.02s | **1.09s, 2.7×** |
-
-fast-anything ports the outermost loop it can, not the tiny function called inside it, so the app crosses into Rust once instead of millions of times. Porting only the inner `levenshtein` gave 35× and 1.9×.
-
-## Why not rewrite it all?
-
-- **Compile time**: each port is a one-function crate. Seconds, not minutes.
-- **Cache**: every port shares one `.fast/target`. Delete it whenever you like (`fast-anything clean`).
-- **Risk**: your code stays as it is. Rust is opt-in per function, checked against real behavior.
+Every 5th recorded call (from 5 calls up) is held out of the folder the agent works in: verify replays it too but reports a mismatch there without the values, so a port that special-cases the calls it was shown still fails. It's a guard against a port fitted to the calls it was shown, not a sandbox: an agent that goes looking can still read them in `.fast/holdout`.
 
 ## Agents
 
 **Plugin**: the repo is an agent plugin marketplace ([`.agents/plugins/marketplace.json`](.agents/plugins/marketplace.json)) that bundles the skill and the MCP server. Install the CLI first, then:
 
-- **Codex**: `codex plugin marketplace add EL4CTEO/fast-anything`, then install `fast-anything` from `/plugins`
-- **Claude Code**: `/plugin marketplace add EL4CTEO/fast-anything`, then `/plugin install fast-anything@fast-anything` and `/fast-anything:fast python app.py`
+- **Codex**: `codex plugin marketplace add Butterski/fast-anything`, then install `fast-anything` from `/plugins`
+- **Claude Code**: `/plugin marketplace add Butterski/fast-anything`, then `/plugin install fast-anything@fast-anything` and `/fast-anything:fast python app.py`
 
 Or wire it up by hand:
 
-- **MCP server** (Claude Code, Codex, Cursor…), built into the binary: `claude mcp add fast-anything -- fast-anything mcp`. 8 tools: `fast_scan`, `fast_port`, `fast_verify`, `fast_enable`, `fast_disable`, `fast_bench`, `fast_report`, `fast_status`.
+- **MCP server** (Claude Code, Codex, Cursor…), built into the binary: `claude mcp add fast-anything -- fast-anything mcp`. 8 tools: `fast_scan`, `fast_port` (takes `backend`), `fast_verify`, `fast_enable`, `fast_disable`, `fast_bench`, `fast_report`, `fast_status`.
 - **Skill**: [`skills/fast-anything`](skills/fast-anything/SKILL.md) teaches any agent the loop.
 
 ## Languages
 
-| language | binding | status |
+| language | port and binding | status |
 |---|---|---|
-| Python 3.10+ | PyO3; servers and GUIs: `scan --duration 30` (stops them like Ctrl+C) | ✅ |
-| JavaScript / TypeScript (Node 22+, Bun, Deno 2+: `bun app.ts`, `deno run -A app.ts`) | napi-rs; servers: `scan --duration 30` (ends them with `process.exit`) | ✅ |
-| Ruby 3.3+ | C ABI + JSON, through Ruby's built-in Fiddle; servers: `scan --duration 30` (stops them like Ctrl+C) | ✅ |
+| Python 3.11+ (Linux, macOS) | C++20 through the CPython stable ABI (`fa/py.hpp`); servers and GUIs: `scan --duration 30` (stops them like Ctrl+C) | ✅ |
+| Python 3.10+ (Windows, or `--backend rust`) | Rust through PyO3 | ✅ |
+| JavaScript / TypeScript (Node 22+, Bun, Deno 2+: `bun app.ts`, `deno run -A app.ts`) | Rust through napi-rs; servers: `scan --duration 30` (ends them with `process.exit`) | ✅ |
+| Ruby 3.3+ | Rust, C ABI + JSON, through Ruby's built-in Fiddle; servers: `scan --duration 30` (stops them like Ctrl+C) | ✅ |
 | Java 22+ (`java App.java`, Maven, Gradle) | the same C bridge, through the FFM API; servers: `scan --duration 30` | ✅ |
 | Kotlin/JVM (Gradle, `src/main/kotlin`, JDK 22+) | the Java bridge; top-level functions, `object` and companion members, extension functions | ✅ |
 | Go 1.22+ (`go run .`) | the same C bridge, through the Windows loader or dlopen (cgo); servers: `scan --duration 30` | ✅ |
@@ -124,10 +130,17 @@ Or wire it up by hand:
 
 It ports top-level, deterministic functions that take plain data (numbers, strings, lists, dicts, typed arrays…), including ones in your entry script when its main code sits under `if __name__ == "__main__":` (or `if __FILE__ == $0`, or `if (import.meta.main)` / `if (require.main === module)`). In Python that means module-level functions, `@staticmethod`s and `@classmethod`s that don't use `cls` (dataclasses, NamedTuples and numeric NumPy arrays count as plain data), in Java, C# and PHP static methods (and PHP functions), in Go plain functions, in C and C++ free functions and static methods. `scan` says why anything else can't move yet.
 
-With Intel oneAPI on Windows, run fast-anything from a shell where `setvars.bat` ran (it sets up the linker). SYCL kernels run on the device and aren't ported; with `-fsycl`, only host functions are profiled and ported.
+## Roadmap
 
-Ruby, Java, Go, PHP, C, C++, C# and R need no headers, bindings or extra tools: the port is a plain Rust library with one C entry point taking and returning JSON, and fast-anything replays the recorded calls against it directly. Any language that can call C can use that bridge. A C port also has a typed entry point that takes the function's own arguments and returns its result, NaN and infinity included; the C app calls that one, and verify replays and times it.
+- **Memory safety in verify.** C++ has no borrow checker, and equal results don't rule out an out-of-bounds read: verify will also replay the calls against an AddressSanitizer and UndefinedBehaviorSanitizer build.
+- **Instruction counts.** RayoMD gates its changes on instructions as well as time (`perf stat`); verify and bench will report them per port.
+- **C++ for the C-bridge languages** (Ruby, Java, Kotlin, Go, PHP, C, C++, C#, R): the same C entry point with JSON in and out, built by `c++` instead of cargo, so the bridges stay as they are.
+- **Node.js** through Node-API in C++, and **Windows** (MSVC or clang-cl).
+
+## Upstream
+
+`main` here is upstream's latest release plus this fork's commits; upstream releases are merged in as they come. [CHANGELOG.md](CHANGELOG.md) has the fork's changes on top.
 
 ## License
 
-MIT
+MIT, as upstream ([LICENSE](LICENSE) keeps EL4CTEO's notice).
