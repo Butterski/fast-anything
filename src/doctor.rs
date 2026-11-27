@@ -174,6 +174,13 @@ pub fn check() -> Report {
         },
     ];
     let mut tools: Vec<Tool> = checks.into_iter().map(Check::into_tool).collect();
+    // cargo links every port with the system C compiler driver: without one, each Rust port fails to link
+    if !cfg!(windows) && tools[0].ok && version("cc", &["--version"]).is_none() {
+        tools[0].ok = false;
+        tools[0].problem = Some(
+            "found, but no C linker (cc) to link ports with: install build-essential (Debian/Ubuntu) or Xcode's command line tools".into(),
+        );
+    }
     let ready_to_scan = tools[1..12].iter().any(|t| t.ok);
     let cxx = cxx_tool();
     let ready_to_port = tools[0].ok || cxx.ok;
